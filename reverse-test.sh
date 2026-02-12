@@ -1,18 +1,19 @@
 #!/bin/bash
 
-clear
+VERSION="3.0"
 
-echo "======================================"
-echo "        Reverse Tunnel Tester         "
-echo "======================================"
+clear
+echo "==============================================="
+echo "     Reverse Tunnel Monitor v$VERSION"
+echo "==============================================="
 echo ""
-echo "1) Run as IRAN (Portal - Listener)"
-echo "2) Run as OUTSIDE (Bridge - Connector)"
+echo "1) IRAN (Portal - Listener)"
+echo "2) OUTSIDE (Bridge - Multi Target Monitor)"
 echo ""
 read -p "Select mode [1-2]: " MODE
 
 ########################################
-# IRAN MODE (Portal)
+# IRAN MODE
 ########################################
 if [ "$MODE" == "1" ]; then
 
@@ -22,11 +23,8 @@ if [ "$MODE" == "1" ]; then
     LOG="portal_$(date +%Y%m%d_%H%M%S).log"
 
     echo -e "\e[32m[✔] Portal started on port $PORT\e[0m"
-    echo "[+] Log file: $LOG"
 
     while true; do
-        echo -e "\e[34m[*] Waiting for bridge connection...\e[0m"
-
         START_TIME=$(date +%s)
 
         nc -lvnp $PORT 2>/dev/null | while read line; do
@@ -35,38 +33,76 @@ if [ "$MODE" == "1" ]; then
         done
 
         END_TIME=$(date +%s)
-        DURATION=$((END_TIME - START_TIME))
-
-        echo -e "\e[31m[!] Connection closed. Duration: ${DURATION}s\e[0m"
+        echo -e "\e[31m[!] Disconnected after $((END_TIME-START_TIME))s\e[0m"
         sleep 2
     done
 fi
 
 ########################################
-# OUTSIDE MODE (Bridge)
+# OUTSIDE MODE (Multi Target + Failover)
 ########################################
 if [ "$MODE" == "2" ]; then
 
-    read -p "Enter Portal IP or Domain: " HOST
+    echo "Enter Portal IPs or Domains (space separated):"
+    read TARGETS
+
     read -p "Enter Port (default 4433): " PORT
     PORT=${PORT:-4433}
 
-    echo -e "\e[32m[✔] Bridge starting...\e[0m"
+    BEST_HOST=""
+    BEST_LAT=999999
 
-    while true; do
+    echo ""
+    echo "========== Network Scan =========="
 
-        echo -e "\e[34m[*] Checking connectivity...\e[0m"
+    for HOST in $TARGETS; do
 
-        if ping -c 1 $HOST > /dev/null 2>&1; then
-            echo -e "\e[32m[✔] Host reachable\e[0m"
-        else
-            echo -e "\e[31m[✘] Host unreachable\e[0m"
+        echo -e "\e[34m[*] Testing $HOST\e[0m"
+
+        PING=$(ping -c 3 -W 2 $HOST 2>/dev/null)
+        if [ $? -ne 0 ]; then
+            echo -e "\e[31m[✘] Unreachable\e[0m"
+            continue
         fi
 
-        echo -e "\e[34m[*] Connecting to $HOST:$PORT ...\e[0m"
+        LOSS=$(echo "$PING" | grep -oP '\d+(?=% packet loss)')
+        LAT=$(echo "$PING" | grep -oP 'avg = \K[0-9.]+' | cut -d'.' -f1)
+
+        echo "Loss: $LOSS% | Latency: $LAT ms"
+
+        timeout 3 bash -c "cat < /dev/null > /dev/tcp/$HOST/$PORT" 2>/dev/null
+        if [ $? -ne 0 ]; then
+            echo -e "\e[31m[✘] TCP Closed\e[0m"
+            continue
+        fi
+
+        echo -e "\e[32m[✔] TCP Open\e[0m"
+
+        if [ "$LAT" -lt "$BEST_LAT" ]; then
+            BEST_LAT=$LAT
+            BEST_HOST=$HOST
+        fi
+
+    done
+
+    if [ -z "$BEST_HOST" ]; then
+        echo -e "\e[31m[✘] No available targets found.\e[0m"
+        exit 1
+    fi
+
+    echo ""
+    echo -e "\e[32m[✔] Best target selected: $BEST_HOST ($BEST_LAT ms)\e[0m"
+    echo ""
+
+    ########################################
+    # Connection Loop
+    ########################################
+    while true; do
+
+        echo -e "\e[34m[*] Connecting to $BEST_HOST:$PORT\e[0m"
 
         {
-            echo "=== Bridge Connected from $(hostname) ==="
+            echo "=== Connected from $(hostname) ==="
             START=$(date +%s)
 
             while true; do
@@ -75,13 +111,14 @@ if [ "$MODE" == "2" ]; then
                 sleep 5
             done
 
-        } | nc $HOST $PORT
+        } | nc $BEST_HOST $PORT
 
         END=$(date +%s)
-        RUNTIME=$((END - START))
+        RUNTIME=$((END-START))
 
         echo -e "\e[31m[!] Disconnected after ${RUNTIME}s\e[0m"
-        echo -e "\e[33m[*] Reconnecting in 3 seconds...\e[0m"
+        echo -e "\e[33m[*] Re-scanning targets...\e[0m"
         sleep 3
+        exec "$0"
     done
 fi
