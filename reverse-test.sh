@@ -66,4 +66,63 @@ if [ "$MODE" == "2" ]; then
             continue
         fi
 
-        LOSS=$(echo "$PING
+        LOSS=$(echo "$PING" | grep -oP '\d+(?=% packet loss)')
+        LAT=$(echo "$PING" | tail -1 | awk -F '/' '{print $5}')
+        LAT=${LAT:-9999}
+
+        echo "Packet Loss: $LOSS% | Avg Latency: ${LAT} ms"
+
+        # TCP test
+        timeout 3 bash -c "cat < /dev/null > /dev/tcp/$HOST/$PORT" 2>/dev/null
+        if [ $? -ne 0 ]; then
+            echo -e "\e[31m[✘] TCP Closed or Filtered\e[0m"
+            continue
+        fi
+
+        echo -e "\e[32m[✔] TCP Open\e[0m"
+
+        # Pick best latency
+        if [ "$LAT" -lt "$BEST_LAT" ]; then
+            BEST_LAT=$LAT
+            BEST_HOST=$HOST
+        fi
+
+    done
+
+    if [ -z "$BEST_HOST" ]; then
+        echo -e "\e[31m[✘] No available targets found.\e[0m"
+        exit 1
+    fi
+
+    echo ""
+    echo -e "\e[32m[✔] Best target selected: $BEST_HOST (Latency: ${BEST_LAT} ms)\e[0m"
+    echo ""
+
+    ########################################
+    # Connection Loop
+    ########################################
+    while true; do
+
+        echo -e "\e[34m[*] Connecting to $BEST_HOST:$PORT\e[0m"
+
+        {
+            echo "=== Connected from $(hostname) ==="
+            START=$(date +%s)
+
+            while true; do
+                NOW=$(date '+%H:%M:%S')
+                echo "Heartbeat | $NOW"
+                sleep 5
+            done
+
+        } | nc $BEST_HOST $PORT
+
+        END=$(date +%s)
+        RUNTIME=$((END-START))
+
+        echo -e "\e[31m[!] Disconnected after ${RUNTIME}s\e[0m"
+        echo -e "\e[33m[*] Re-scanning targets in 3 seconds...\e[0m"
+        sleep 3
+        exec "$0"
+    done
+fi
