@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="3.0"
+VERSION="3.1"
 
 clear
 echo "==============================================="
@@ -50,7 +50,7 @@ if [ "$MODE" == "2" ]; then
     PORT=${PORT:-4433}
 
     BEST_HOST=""
-    BEST_LAT=999999
+    BEST_LAT=9999
 
     echo ""
     echo "========== Network Scan =========="
@@ -59,66 +59,11 @@ if [ "$MODE" == "2" ]; then
 
         echo -e "\e[34m[*] Testing $HOST\e[0m"
 
+        # Ping test
         PING=$(ping -c 3 -W 2 $HOST 2>/dev/null)
         if [ $? -ne 0 ]; then
             echo -e "\e[31m[✘] Unreachable\e[0m"
             continue
         fi
 
-        LOSS=$(echo "$PING" | grep -oP '\d+(?=% packet loss)')
-        LAT=$(echo "$PING" | grep -oP 'avg = \K[0-9.]+' | cut -d'.' -f1)
-
-        echo "Loss: $LOSS% | Latency: $LAT ms"
-
-        timeout 3 bash -c "cat < /dev/null > /dev/tcp/$HOST/$PORT" 2>/dev/null
-        if [ $? -ne 0 ]; then
-            echo -e "\e[31m[✘] TCP Closed\e[0m"
-            continue
-        fi
-
-        echo -e "\e[32m[✔] TCP Open\e[0m"
-
-        if [ "$LAT" -lt "$BEST_LAT" ]; then
-            BEST_LAT=$LAT
-            BEST_HOST=$HOST
-        fi
-
-    done
-
-    if [ -z "$BEST_HOST" ]; then
-        echo -e "\e[31m[✘] No available targets found.\e[0m"
-        exit 1
-    fi
-
-    echo ""
-    echo -e "\e[32m[✔] Best target selected: $BEST_HOST ($BEST_LAT ms)\e[0m"
-    echo ""
-
-    ########################################
-    # Connection Loop
-    ########################################
-    while true; do
-
-        echo -e "\e[34m[*] Connecting to $BEST_HOST:$PORT\e[0m"
-
-        {
-            echo "=== Connected from $(hostname) ==="
-            START=$(date +%s)
-
-            while true; do
-                NOW=$(date '+%H:%M:%S')
-                echo "Heartbeat | $NOW"
-                sleep 5
-            done
-
-        } | nc $BEST_HOST $PORT
-
-        END=$(date +%s)
-        RUNTIME=$((END-START))
-
-        echo -e "\e[31m[!] Disconnected after ${RUNTIME}s\e[0m"
-        echo -e "\e[33m[*] Re-scanning targets...\e[0m"
-        sleep 3
-        exec "$0"
-    done
-fi
+        LOSS=$(echo "$PING
